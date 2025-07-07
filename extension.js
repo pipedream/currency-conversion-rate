@@ -2,14 +2,14 @@ import GObject from 'gi://GObject';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
+import Soup from 'gi://Soup';
 
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import { PopupMenuItem, PopupSeparatorMenuItem } from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
-// Import both of our robust helpers
-import { getSettings, fetchJSON } from './convenience.js';
+import { fetchJSON, saveJSON } from './convenience.js';
 
 // Custom Cairo-based line chart widget
 const LineChart = GObject.registerClass(
@@ -188,23 +188,22 @@ const LineChart = GObject.registerClass(
 
         cr.$dispose();
       }
-      
+
       updateData(data) {
         this._data = data;
         this.queue_repaint();
       }
-    });
+    }
+);
 
 const CurrencyIndicator = GObject.registerClass(
     class CurrencyIndicator extends PanelMenu.Button {
-      // The _init method now accepts the full extension object.
-      _init(settings, extension) {
+      _init(extension) {
         super._init(0.0, 'Currency Converter');
-        this._settings = settings;
-        // Store the extension object itself.
+        // Store the entire extension object to access its properties and methods
         this._extension = extension;
+        this._settings = this._extension.getSettings();
 
-        // Main indicator layout for rate + difference
         const indicatorLayout = new St.BoxLayout({ style_class: 'panel-status-menu-box' });
         this.label = new St.Label({
           text: 'Loading...',
@@ -227,9 +226,6 @@ const CurrencyIndicator = GObject.registerClass(
         indicatorLayout.add_child(this._differenceLabel);
         this.add_child(indicatorLayout);
 
-        // --- Menu Items ---
-
-        // Chart placeholder in the menu
         this._chartItem = new PopupMenuItem('', { reactive: false, can_focus: false });
         this._chartContainer = new St.BoxLayout({
           vertical: true,
@@ -238,11 +234,9 @@ const CurrencyIndicator = GObject.registerClass(
         this._chartItem.add_child(this._chartContainer);
         this.menu.addMenuItem(this._chartItem);
 
-        // Initialize the line chart
         this._lineChart = new LineChart([], 500, 250);
         this._chartContainer.add_child(this._lineChart);
 
-        // Separator
         this.menu.addMenuItem(new PopupSeparatorMenuItem());
 
         // Refresh Item
@@ -250,13 +244,16 @@ const CurrencyIndicator = GObject.registerClass(
         refreshItem.connect('activate', () => this._updateExchangeRate());
         this.menu.addMenuItem(refreshItem);
 
+        // *** NEW: Update Currency List Item ***
+        const updateCurrenciesItem = new PopupMenuItem('Update Currency List');
+        updateCurrenciesItem.connect('activate', () => this._updateCurrencyList());
+        this.menu.addMenuItem(updateCurrenciesItem);
+
         // Preferences Item
         const prefsItem = new PopupMenuItem('Preferences…');
-        // This now calls a local method which calls the extension's method.
-        prefsItem.connect('activate', () => this._openPreferences());
+        prefsItem.connect('activate', () => this._extension.openPreferences());
         this.menu.addMenuItem(prefsItem);
 
-        // --- Connections and Timers ---
         this._settingsChangedId = this._settings.connect('changed', () => {
           this._updateExchangeRate();
         });
@@ -266,40 +263,34 @@ const CurrencyIndicator = GObject.registerClass(
             30 * 60, // 30 minutes
             () => {
               this._updateExchangeRate();
-              return GLib.SOURCE_CONTINUE; // Keep the timer running
+              return GLib.SOURCE_CONTINUE;
             }
         );
 
-        // Initial update
         this._updateExchangeRate();
-      }
-
-      // A helper method to call the extension's openPreferences.
-      _openPreferences() {
-        this._extension.openPreferences();
       }
 
       async _updateExchangeRate() {
         try {
-          const base = this._settings.get_string('base-currency').toLowerCase();
-          const target = this._settings.get_string('target-currency').toLowerCase();
+          Main.notify('Currency Converter', 'Updating exchange rate...');
+          const base = this._settings.get_string('base-currency');
+          const target = this._settings.get_string('target-currency');
 
           if (!base || !target) {
             this.label.set_text('Config Error');
+            Main.notify('Currency Converter', 'Config Error...');
             return;
           }
 
-          // Generate dates for today and the last 10 days
           const dates = [];
           const today = GLib.DateTime.new_now_local();
-          for (let i = 0; i < 10; i++) { // Today + 9 previous days
+          for (let i = 0; i < 10; i++) {
             dates.push(today.add_days(-i).format('%Y-%m-%d'));
           }
 
-          // Create and run all API calls in parallel for efficiency
           const promises = dates.map(date => {
             const url = `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${date}/v1/currencies/${base}.min.json`;
-            return fetchJSON(url);
+            return fetchJSON(this._extension._httpSession, url);
           });
 
           const results = await Promise.all(promises);
@@ -315,10 +306,8 @@ const CurrencyIndicator = GObject.registerClass(
             return;
           }
 
-          // 1. Update main label
           this.label.set_text(`${base.toUpperCase()}/${target.toUpperCase()}: ${todayRate.toFixed(4)}`);
 
-          // 2. Update difference from yesterday
           if (yesterdayRate !== undefined) {
             this._updateDifferenceIndicator(todayRate - yesterdayRate);
           } else {
@@ -326,19 +315,38 @@ const CurrencyIndicator = GObject.registerClass(
             this._differenceLabel.visible = false;
           }
 
-          // 3. Build and display the historical chart
           const historicalRates = results.map((res, index) => ({
             date: dates[index],
             rate: res[base]?.[target],
-          })).reverse(); // Oldest first
+          })).reverse();
 
-          // Update the line chart with historical data (including today)
           this._lineChart.updateData(historicalRates.slice(0, 10));
+          Main.notify('Currency Converter', 'Exchange rate updated successfully!');
         } catch (e) {
-          console.error(`[CurrencyConverter] Failed to update rate: ${e}`);
-          this.label.set_text('Error');
-          // Show error message
-          this._lineChart.updateData([]);
+          // Don't log cancellation errors, as they are expected on shutdown
+          if (e.message !== 'Request was cancelled.') {
+            Main.notify('Currency Converter', 'Failed to update exchange rate.');
+            console.error(`[CurrencyConverter] Failed to update rate: ${e}`);
+            this.label.set_text('Error');
+            this._lineChart.updateData([]);
+          }
+        }
+      }
+
+      // *** NEW: Method to update the currency list file ***
+      async _updateCurrencyList() {
+        Main.notify('Currency Converter', 'Updating currency list...');
+        try {
+          const url = 'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies.min.json';
+          const data = await fetchJSON(this._extension._httpSession, url);
+
+          const filePath = `${this._extension.path}/currencies.min.json`;
+          saveJSON(filePath, data);
+
+          Main.notify('Currency Converter', 'Currency list updated successfully!');
+        } catch (e) {
+          console.error(`[CurrencyConverter] Failed to update currency list: ${e}`);
+          Main.notify('Currency Converter', 'Failed to update currency list.');
         }
       }
 
@@ -348,12 +356,12 @@ const CurrencyIndicator = GObject.registerClass(
 
         if (diff > 0.00001) {
           this._differenceIcon.icon_name = 'go-up-symbolic';
-          this._differenceIcon.style = 'color: #26A269; margin-left: 5px;'; // Green
+          this._differenceIcon.style = 'color: #26A269; margin-left: 5px;';
         } else if (diff < -0.00001) {
           this._differenceIcon.icon_name = 'go-down-symbolic';
-          this._differenceIcon.style = 'color: #E01B24; margin-left: 5px;'; // Red
+          this._differenceIcon.style = 'color: #E01B24; margin-left: 5px;';
         } else {
-          this._differenceIcon.icon_name = 'go-next-symbolic'; // Neutral
+          this._differenceIcon.icon_name = 'go-next-symbolic';
           this._differenceIcon.style = 'color: #888; margin-left: 5px;';
         }
         this._differenceLabel.text = Math.abs(diff).toFixed(4);
@@ -377,17 +385,25 @@ const CurrencyIndicator = GObject.registerClass(
 
 export default class CurrencyConverterExtension extends Extension {
   enable() {
-    this._settings = getSettings(this.uuid);
+    // Create instances of objects in enable(), not global scope.
+    this._httpSession = new Soup.Session();
+
     // Pass `this` (the extension object) to the indicator.
-    this._indicator = new CurrencyIndicator(this._settings, this);
+    this._indicator = new CurrencyIndicator(this);
     Main.panel.addToStatusArea(this.uuid, this._indicator);
   }
 
   disable() {
+    //Call abort() on disable to cancel any pending network requests.
+    if (this._httpSession) {
+      this._httpSession.abort();
+      this._httpSession = null;
+    }
+
+    // Destroy all objects created in enable().
     if (this._indicator) {
       this._indicator.destroy();
       this._indicator = null;
     }
-    this._settings = null;
   }
 }

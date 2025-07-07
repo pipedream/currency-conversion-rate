@@ -42,6 +42,7 @@ jobs:
             prefs.js \
             convenience.js \
             metadata.json \
+            currencies.json \
             schemas/
 
       # 4. Upload the generated zip file as a build artifact

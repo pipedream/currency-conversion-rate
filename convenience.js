@@ -1,56 +1,45 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
-import Soup from 'gi://Soup?version=3.0';
-
-// Create a single, reusable Soup.Session for efficiency across the extension.
-const _httpSession = new Soup.Session();
+import Soup from 'gi://Soup';
 
 /**
- * Returns a Gio.Settings object for the extension's schema.
- * @param {string} uuid The UUID of the extension.
- * @returns {Gio.Settings}
+ * Saves a JavaScript object to a file as a JSON string.
+ * @param {string} path The full path to the file.
+ * @param {object} data The JavaScript object to save.
  */
-export function getSettings(uuid) {
-    const extensionSchemaPath = GLib.build_filenamev([
-        GLib.get_home_dir(),
-        '.local',
-        'share',
-        'gnome-shell',
-        'extensions',
-        uuid,
-        'schemas',
-    ]);
-
-    const schemaSource = Gio.SettingsSchemaSource.new_from_directory(
-        extensionSchemaPath,
-        Gio.SettingsSchemaSource.get_default(),
-        false
-    );
-
-    if (!schemaSource) {
-        throw new Error(`Could not create schema source for ${uuid} at ${extensionSchemaPath}`);
+export function saveJSON(path, data) {
+    try {
+        const file = Gio.File.new_for_path(path);
+        const jsonString = JSON.stringify(data, null, 2); // Pretty-print JSON
+        // Use replace_contents for an atomic write operation
+        file.replace_contents(
+            jsonString,
+            null,
+            false,
+            Gio.FileCreateFlags.REPLACE_DESTINATION,
+            null
+        );
+    } catch (e) {
+        throw new Error(`Failed to save JSON to ${path}: ${e.message}`);
     }
-
-    const schemaId = 'org.gnome.shell.extensions.currency-conversion-rate';
-    const schema = schemaSource.lookup(schemaId, true);
-    if (!schema) {
-        throw new Error(`Schema '${schemaId}' not found.`);
-    }
-
-    return new Gio.Settings({ settings_schema: schema });
 }
 
 /**
  * Performs an asynchronous network request and returns the parsed JSON.
- * This is a reusable helper to replace the browser's 'fetch' API.
+ * @param {Soup.Session} session The Soup.Session to use for the request.
  * @param {string} url The URL to fetch.
  * @returns {Promise<object>} A promise that resolves with the parsed JSON object.
  */
-export function fetchJSON(url) {
+export function fetchJSON(session, url) {
     const message = Soup.Message.new('GET', url);
 
     return new Promise((resolve, reject) => {
-        _httpSession.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (session, result) => {
+        session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (session, result) => {
+            if (message.get_status() === Soup.Status.CANCELLED) {
+                reject(new Error('Request was cancelled.'));
+                return;
+            }
+
             try {
                 const bytes = session.send_and_read_finish(result);
 

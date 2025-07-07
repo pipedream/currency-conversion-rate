@@ -6,7 +6,7 @@
 A simple and elegant GNOME Shell extension that displays real-time currency conversion rates directly on your top panel.
 
 
-![Extension Screenshot 1](screenshots/img.png)
+![Extension Screenshot 1](screenshots/img_1.png)
 
 ## Features
 
@@ -14,7 +14,7 @@ A simple and elegant GNOME Shell extension that displays real-time currency conv
 *   **Daily Change Indicator**: A visual icon (▲, ▼, or ―) shows you if the rate has gone up, down, or stayed the same since yesterday.
 *   **Historical Data Chart**: A simple text-based line chart in the dropdown menu visualizes the rate trend over the last 10 days.
 *   **Customizable Currencies**: Use the preferences window to select any base and target currency from a comprehensive list.
-*   **Manual Refresh**: Instantly fetch the latest rates with a "Refresh" button in the menu.
+*   **Manual Refresh**: Instantly fetch the latest rates with a "Refresh" button in the menu and update the currency list.
 *   **Resilient Design**: Works reliably using standard, legacy-compatible GNOME Shell features for maximum stability.
 
 ## Installation
