@@ -244,7 +244,7 @@ const CurrencyIndicator = GObject.registerClass(
         refreshItem.connect('activate', () => this._updateExchangeRate());
         this.menu.addMenuItem(refreshItem);
 
-        // *** NEW: Update Currency List Item ***
+        // Update Currency List Item
         const updateCurrenciesItem = new PopupMenuItem('Update Currency List');
         updateCurrenciesItem.connect('activate', () => this._updateCurrencyList());
         this.menu.addMenuItem(updateCurrenciesItem);
@@ -272,13 +272,11 @@ const CurrencyIndicator = GObject.registerClass(
 
       async _updateExchangeRate() {
         try {
-          Main.notify('Currency Converter', 'Updating exchange rate...');
           const base = this._settings.get_string('base-currency');
           const target = this._settings.get_string('target-currency');
 
           if (!base || !target) {
             this.label.set_text('Config Error');
-            Main.notify('Currency Converter', 'Config Error...');
             return;
           }
 
@@ -290,6 +288,7 @@ const CurrencyIndicator = GObject.registerClass(
 
           const promises = dates.map(date => {
             const url = `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${date}/v1/currencies/${base}.min.json`;
+            // Pass the session from the main extension object
             return fetchJSON(this._extension._httpSession, url);
           });
 
@@ -321,11 +320,9 @@ const CurrencyIndicator = GObject.registerClass(
           })).reverse();
 
           this._lineChart.updateData(historicalRates.slice(0, 10));
-          Main.notify('Currency Converter', 'Exchange rate updated successfully!');
         } catch (e) {
           // Don't log cancellation errors, as they are expected on shutdown
           if (e.message !== 'Request was cancelled.') {
-            Main.notify('Currency Converter', 'Failed to update exchange rate.');
             console.error(`[CurrencyConverter] Failed to update rate: ${e}`);
             this.label.set_text('Error');
             this._lineChart.updateData([]);
@@ -333,7 +330,6 @@ const CurrencyIndicator = GObject.registerClass(
         }
       }
 
-      // *** NEW: Method to update the currency list file ***
       async _updateCurrencyList() {
         Main.notify('Currency Converter', 'Updating currency list...');
         try {
@@ -344,9 +340,44 @@ const CurrencyIndicator = GObject.registerClass(
           saveJSON(filePath, data);
 
           Main.notify('Currency Converter', 'Currency list updated successfully!');
+
+          // Validate settings against the new list to handle removed currencies
+          this._validateCurrencySettings(Object.keys(data));
+
         } catch (e) {
           console.error(`[CurrencyConverter] Failed to update currency list: ${e}`);
           Main.notify('Currency Converter', 'Failed to update currency list.');
+        }
+      }
+
+      /**
+       * Checks if the stored currencies are still valid after an update.
+       * Resets them to a default if they are not.
+       * @param {string[]} newCurrencies - An array of the new valid currency codes.
+       */
+      _validateCurrencySettings(newCurrencies) {
+        const base = this._settings.get_string('base-currency');
+        const target = this._settings.get_string('target-currency');
+        const defaultCurrency = 'usd'; // A safe default
+
+        // Check if the base currency is still valid
+        if (!newCurrencies.includes(base)) {
+          Main.notify(
+              'Currency Converter',
+              `Base currency '${base.toUpperCase()}' is no longer supported and was reset.`
+          );
+          this._settings.set_string('base-currency', defaultCurrency);
+        }
+
+        // Check if the target currency is still valid
+        if (!newCurrencies.includes(target)) {
+          Main.notify(
+              'Currency Converter',
+              `Target currency '${target.toUpperCase()}' is no longer supported and was reset.`
+          );
+          // Ensure we don't set base and target to the same default value
+          const newTarget = defaultCurrency === this._settings.get_string('base-currency') ? 'eur' : defaultCurrency;
+          this._settings.set_string('target-currency', newTarget);
         }
       }
 
@@ -394,7 +425,7 @@ export default class CurrencyConverterExtension extends Extension {
   }
 
   disable() {
-    //Call abort() on disable to cancel any pending network requests.
+    // Call abort() on disable to cancel any pending network requests.
     if (this._httpSession) {
       this._httpSession.abort();
       this._httpSession = null;
