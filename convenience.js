@@ -3,59 +3,37 @@ import GLib from 'gi://GLib';
 import Soup from 'gi://Soup';
 
 /**
- * Saves a JavaScript object to a file as a JSON string.
- * @param {string} path The full path to the file.
- * @param {object} data The JavaScript object to save.
+ * Atomically write a JS object as JSON to `path`.
  */
 export function saveJSON(path, data) {
-    try {
-        const file = Gio.File.new_for_path(path);
-        const jsonString = JSON.stringify(data, null, 2); // Pretty-print JSON
-        // Use replace_contents for an atomic write operation
-        file.replace_contents(
-            jsonString,
-            null,
-            false,
-            Gio.FileCreateFlags.REPLACE_DESTINATION,
-            null
-        );
-    } catch (e) {
-        throw new Error(`Failed to save JSON to ${path}: ${e.message}`);
-    }
+    const file = Gio.File.new_for_path(path);
+    file.replace_contents(
+        JSON.stringify(data, null, 2),
+        null, false,
+        Gio.FileCreateFlags.REPLACE_DESTINATION,
+        null
+    );
 }
 
 /**
- * Performs an asynchronous network request and returns the parsed JSON.
- * @param {Soup.Session} session The Soup.Session to use for the request.
- * @param {string} url The URL to fetch.
- * @returns {Promise<object>} A promise that resolves with the parsed JSON object.
+ * Fetch `url` via `session` and return the parsed JSON.
+ * Rejects with a descriptive Error on network or HTTP failure.
  */
 export function fetchJSON(session, url) {
-    const message = Soup.Message.new('GET', url);
-
+    const msg = Soup.Message.new('GET', url);
     return new Promise((resolve, reject) => {
-        session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (session, result) => {
-            if (message.get_status() === Soup.Status.CANCELLED) {
+        session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null, (s, result) => {
+            if (msg.get_status() === Soup.Status.CANCELLED) {
                 reject(new Error('Request was cancelled.'));
                 return;
             }
-
             try {
-                const bytes = session.send_and_read_finish(result);
-
-                if (message.get_status() !== Soup.Status.OK) {
-                    reject(new Error(`HTTP error! status: ${message.get_status()}`));
-                    return;
-                }
-
-                if (!bytes || bytes.get_size() === 0) {
-                    reject(new Error('Empty response'));
-                    return;
-                }
-
-                const decoder = new TextDecoder('utf-8');
-                const response = decoder.decode(bytes.get_data());
-                resolve(JSON.parse(response));
+                const bytes = s.send_and_read_finish(result);
+                if (msg.get_status() !== Soup.Status.OK)
+                    throw new Error(`HTTP ${msg.get_status()} for ${url}`);
+                if (!bytes?.get_size())
+                    throw new Error(`Empty response from ${url}`);
+                resolve(JSON.parse(new TextDecoder().decode(bytes.get_data())));
             } catch (e) {
                 reject(e);
             }

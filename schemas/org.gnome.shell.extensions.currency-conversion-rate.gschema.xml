@@ -3,14 +3,14 @@
   <schema id="org.gnome.shell.extensions.currency-conversion-rate"
           path="/org/gnome/shell/extensions/currency-conversion-rate/">
     <key name="base-currency" type="s">
-      <default>'USD'</default>
+      <default>'usd'</default>
       <summary>Base Currency</summary>
-      <description>The currency to convert from</description>
+      <description>The currency to convert from (default: USD)</description>
     </key>
     <key name="target-currency" type="s">
-      <default>'EUR'</default>
+      <default>'zar'</default>
       <summary>Target Currency</summary>
-      <description>The currency to convert to</description>
+      <description>The currency to convert to (default: ZAR)</description>
     </key>
   </schema>
 </schemalist>

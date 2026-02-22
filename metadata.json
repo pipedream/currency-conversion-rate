@@ -1,9 +1,9 @@
 {
-  "uuid": "currency-conversion-rate@optimus",
+  "uuid": "currency-conversion-rate@pipedream.github.com",
   "name": "Currency Conversion Rate",
   "description": "Displays real-time currency conversion rates on the GNOME top panel",
-  "version": 2,
-  "shell-version": ["45", "46", "47"],
-  "url": "https://github.com/binary-smith/currency-conversion-rate",
+  "version": 3,
+  "shell-version": ["45", "46", "47", "48"],
+  "url": "https://github.com/pipedream/currency-conversion-rate",
   "settings-schema": "org.gnome.shell.extensions.currency-conversion-rate"
 }
