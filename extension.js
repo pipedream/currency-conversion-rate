@@ -4,27 +4,24 @@ import Gio from 'gi://Gio';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import Soup from 'gi://Soup';
-
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import { PopupMenuItem, PopupSeparatorMenuItem } from 'resource:///org/gnome/shell/ui/popupMenu.js';
-
 import { fetchJSON, saveJSON } from './convenience.js';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
 const REFRESH_INTERVAL_S  = 60 * 60;       // auto-refresh rates every hour
 const CURRENCY_LIST_TTL_S = 24 * 60 * 60;  // refresh currency list daily
 const FETCH_BATCH         = 8;              // concurrent API requests
+const API_EARLIEST        = '2024-01-01';  // fawazahmed0 API start date
 
-// Date ranges per view mode
 const VIEW = {
-    month: { days: 30,         step: 1  }, // daily for 1 month
-    year:  { days: 365,        step: 1  }, // daily for 1 year
-    max:   { days: 365 * 5,    step: 7  }, // weekly for 5 years
+    month: { days: 30,      step: 1 }, // daily for 1 month
+    year:  { days: 365,     step: 1 }, // daily for 1 year
+    max:   { from: API_EARLIEST, step: 7 }, // weekly from API start → today
 };
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -32,11 +29,9 @@ const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov
 // ---------------------------------------------------------------------------
 // Disk cache helpers
 // ---------------------------------------------------------------------------
-
 function cacheDir() {
     return `${GLib.get_user_cache_dir()}/gnome-shell-currency-converter`;
 }
-
 function cacheWrite(key, data) {
     try {
         GLib.mkdir_with_parents(cacheDir(), 0o755);
@@ -47,7 +42,6 @@ function cacheWrite(key, data) {
         );
     } catch (e) { console.warn(`[CurrencyConverter] cache write: ${e}`); }
 }
-
 function cacheRead(key, maxAgeS = Infinity) {
     try {
         const [ok, bytes] = Gio.File.new_for_path(`${cacheDir()}/${key}.json`).load_contents(null);
@@ -59,17 +53,15 @@ function cacheRead(key, maxAgeS = Infinity) {
 
 // ---------------------------------------------------------------------------
 // Rate history — one merged file per currency pair, keyed by ISO date
-// { "2022-01-03": 15.91, "2022-01-10": 16.04, ... }
+// { "2024-01-03": 15.91, "2024-01-10": 16.04, ... }
 // ---------------------------------------------------------------------------
-
-const histFile  = (base, target) => `history-${base}-${target}`;
-const loadHist  = (base, target) => cacheRead(histFile(base, target)) ?? {};
-const saveHist  = (base, target, h) => cacheWrite(histFile(base, target), h);
+const histFile = (base, target) => `history-${base}-${target}`;
+const loadHist = (base, target) => cacheRead(histFile(base, target)) ?? {};
+const saveHist = (base, target, h) => cacheWrite(histFile(base, target), h);
 
 // ---------------------------------------------------------------------------
 // API fetch helpers (CDN + Cloudflare fallback)
 // ---------------------------------------------------------------------------
-
 const CDN_URL      = (date, base) =>
     `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${date}/v1/currencies/${base}.min.json`;
 const FALLBACK_URL = (date, base) =>
@@ -97,10 +89,9 @@ async function fetchBatch(session, dates, base, target) {
 // ---------------------------------------------------------------------------
 // Date helpers
 // ---------------------------------------------------------------------------
-
 function isoDate(dt) { return dt.format('%Y-%m-%d'); }
 
-/** Generate ISO date strings stepping backward from today. */
+/** Generate ISO date strings stepping backward from today by stepDays. */
 function makeDates(days, stepDays = 1) {
     const today = GLib.DateTime.new_now_local();
     const dates = [];
@@ -109,26 +100,37 @@ function makeDates(days, stepDays = 1) {
     return dates; // newest → oldest
 }
 
-function toDateLabel(iso) {
-    const [, m, d] = iso.split('-');
-    return `${parseInt(d)} ${MONTHS[parseInt(m) - 1]}`;
+/** Generate weekly ISO dates from API_EARLIEST up to today. */
+function makeMaxDates() {
+    const today    = GLib.DateTime.new_now_local();
+    const earliest = GLib.DateTime.new_local(2024, 1, 1, 0, 0, 0);
+    const dates    = [];
+    let   cur      = today;
+    while (cur.compare(earliest) >= 0) {
+        dates.push(isoDate(cur));
+        cur = cur.add_days(-7);
+    }
+    return dates; // newest → oldest
+}
+
+function toDateLabel(iso, showYear = false) {
+    const [y, m, d] = iso.split('-');
+    const label = `${parseInt(d)} ${MONTHS[parseInt(m) - 1]}`;
+    return showYear ? `${label} ${y.slice(2)}` : label; // "14 Mar" or "14 Mar 24"
 }
 
 // ---------------------------------------------------------------------------
 // Chart widget
 // ---------------------------------------------------------------------------
-
 const LineChart = GObject.registerClass(
 class LineChart extends St.DrawingArea {
     _init(width = 500, height = 250) {
         super._init({ width, height, style_class: 'currency-line-chart' });
-        this._fullData = []; // all loaded points, chronological (oldest first)
+        this._fullData = [];
         this._view     = 'year';
         this.connect('repaint', this._draw.bind(this));
     }
-
     setView(mode) { this._view = mode; this.queue_repaint(); }
-
     setData(data) { this._fullData = data; this.queue_repaint(); } // oldest → newest
 
     _visiblePts() {
@@ -173,8 +175,8 @@ class LineChart extends St.DrawingArea {
         // Axes
         cr.setSourceRGBA(0.5, 0.5, 0.5, 1);
         cr.setLineWidth(1);
-        cr.moveTo(pad.l, pad.t);      cr.lineTo(pad.l, H - pad.b);
-        cr.moveTo(pad.l, H - pad.b);  cr.lineTo(W - pad.r, H - pad.b);
+        cr.moveTo(pad.l, pad.t);     cr.lineTo(pad.l, H - pad.b);
+        cr.moveTo(pad.l, H - pad.b); cr.lineTo(W - pad.r, H - pad.b);
         cr.stroke();
 
         // Y grid + bold labels
@@ -209,14 +211,15 @@ class LineChart extends St.DrawingArea {
         });
         cr.stroke();
 
-        // Dots — only for 1M (≤30 pts); 1Y and Max show the fitted line only
+        // Dots — only for 1M (≤30 pts)
         if (pts.length <= 30) {
             cr.setSourceRGBA(0.3, 0.6, 1, 1);
             pts.forEach((p, i) => { cr.arc(xOf(i), yOf(p.rate), 3, 0, 2 * Math.PI); cr.fill(); });
         }
 
-        // X labels — "DD Mon", bold, evenly spaced
-        const maxLabels = Math.max(2, Math.floor(cw / 52));
+        // X labels — show year when range spans multiple calendar years
+        const multiYear = pts[0].date.slice(0, 4) !== pts.at(-1).date.slice(0, 4);
+        const maxLabels = Math.max(2, Math.floor(cw / (multiYear ? 64 : 52)));
         const step      = (pts.length - 1) / (maxLabels - 1);
         const show      = new Set([0, pts.length - 1]);
         for (let i = 1; i < maxLabels - 1; i++) show.add(Math.round(i * step));
@@ -234,21 +237,16 @@ class LineChart extends St.DrawingArea {
                 cr.translate(x, H - pad.b + 10);
                 cr.rotate(Math.PI / 6);
                 cr.moveTo(0, 0);
-                cr.showText(toDateLabel(p.date));
+                cr.showText(toDateLabel(p.date, multiYear)); // year suffix on multi-year views
                 cr.restore();
             }
         });
 
-        // Title — include year when the range spans more than one calendar year
+        // Title
         cr.setSourceRGBA(0.85, 0.85, 0.85, 1);
         cr.setFontSize(11);
         cr.selectFontFace('Sans', 0, 1);
-        const firstYear = pts[0].date.slice(0, 4);
-        const lastYear  = pts.at(-1).date.slice(0, 4);
-        const fmt       = p => firstYear === lastYear
-            ? toDateLabel(p.date)
-            : `${toDateLabel(p.date)} ${p.date.slice(0, 4)}`;
-        const title = `${fmt(pts[0])} – ${fmt(pts.at(-1))}`;
+        const title = `${toDateLabel(pts[0].date, multiYear)} – ${toDateLabel(pts.at(-1).date, multiYear)}`;
         const te    = cr.textExtents(title);
         cr.moveTo((W - te.width) / 2, pad.t - 7);
         cr.showText(title);
@@ -260,7 +258,6 @@ class LineChart extends St.DrawingArea {
 // ---------------------------------------------------------------------------
 // Panel indicator
 // ---------------------------------------------------------------------------
-
 const CurrencyIndicator = GObject.registerClass(
 class CurrencyIndicator extends PanelMenu.Button {
     _init(extension) {
@@ -318,12 +315,11 @@ class CurrencyIndicator extends PanelMenu.Button {
         mkItem('Preferences…',         () => extension.openPreferences());
 
         this._settingsId = this._settings.connect('changed', () => this._fetchRates(true));
-
-        this._rateTimer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, REFRESH_INTERVAL_S, () => {
+        this._rateTimer  = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, REFRESH_INTERVAL_S, () => {
             this._fetchRates(true);
             return GLib.SOURCE_CONTINUE;
         });
-        this._listTimer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, CURRENCY_LIST_TTL_S, () => {
+        this._listTimer  = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, CURRENCY_LIST_TTL_S, () => {
             this._fetchCurrencyList(false);
             return GLib.SOURCE_CONTINUE;
         });
@@ -332,7 +328,6 @@ class CurrencyIndicator extends PanelMenu.Button {
     }
 
     // ── View button highlight ──────────────────────────────────────────────
-
     _activateBtn(active) {
         for (const [mode, btn] of Object.entries(this._viewBtns)) {
             btn.style = mode === active
@@ -343,7 +338,6 @@ class CurrencyIndicator extends PanelMenu.Button {
 
     // ── Direction indicator ────────────────────────────────────────────────
     // USD/ZAR: rate UP = rand WEAKER (▼ red) / rate DOWN = rand STRONGER (▲ green)
-
     _setDirection(diff) {
         this._dirLabel.visible = this._diffLabel.visible = true;
         if (Math.abs(diff) <= 0.00001) {
@@ -360,15 +354,6 @@ class CurrencyIndicator extends PanelMenu.Button {
     }
 
     // ── Rate fetching ──────────────────────────────────────────────────────
-    //
-    // We maintain one merged history file per pair: { "YYYY-MM-DD": rate }
-    // Each view mode requests its own date set (different step sizes):
-    //   1M / 1Y → daily points for the relevant window
-    //   Max     → weekly points going back 5 years
-    //
-    // Points already in the history file are never re-fetched (they never
-    // change). Only today's value is busted on manual/hourly refresh.
-
     async _fetchRates(bustToday = false) {
         const base   = this._settings.get_string('base-currency');
         const target = this._settings.get_string('target-currency');
@@ -376,19 +361,18 @@ class CurrencyIndicator extends PanelMenu.Button {
 
         const hist = loadHist(base, target);
 
-        // Build the full date set we want: daily for 1Y + weekly going further back
+        // Daily dates for 1Y + weekly dates from API_EARLIEST for Max
         const dailyDates  = makeDates(VIEW.year.days, 1);
-        const weeklyDates = makeDates(VIEW.max.days,  7).filter(d => !dailyDates.includes(d));
-        const allDates    = [...new Set([...dailyDates, ...weeklyDates])]; // unique, newest→oldest
+        const maxDates    = makeMaxDates();
+        const allDates    = [...new Set([...dailyDates, ...maxDates])]; // unique, newest→oldest
 
-        // Bust today so an hourly/manual refresh always gets a fresh value
+        // Bust today on manual/hourly refresh
         if (bustToday || cacheRead(`today-${base}-${target}`, REFRESH_INTERVAL_S) === null) {
             delete hist[allDates[0]];
             cacheWrite(`today-${base}-${target}`, true);
         }
 
         const missing = allDates.filter(d => hist[d] == null);
-
         if (missing.length > 0) {
             this._rateLabel.set_text('Updating…');
             try {
@@ -404,16 +388,15 @@ class CurrencyIndicator extends PanelMenu.Button {
 
         // Panel label
         const today     = allDates[0];
-        const yesterday = dailyDates[1]; // always a daily date
+        const yesterday = dailyDates[1];
         const rate0 = hist[today], rate1 = hist[yesterday];
-
         if (rate0 == null) { this._rateLabel.set_text('No data'); return; }
-        this._rateLabel.set_text(`${base.toUpperCase()}/${target.toUpperCase()}: ${rate0.toFixed(2)}`);
 
+        this._rateLabel.set_text(`${base.toUpperCase()}/${target.toUpperCase()}: ${rate0.toFixed(2)}`);
         if (rate1 != null) this._setDirection(rate0 - rate1);
         else               this._dirLabel.visible = this._diffLabel.visible = false;
 
-        // Build chart data (chronological, oldest first)
+        // Chart data — chronological, oldest first
         const chartData = allDates
             .filter(d => hist[d] != null)
             .map(d => ({ date: d, rate: hist[d] }))
@@ -422,7 +405,6 @@ class CurrencyIndicator extends PanelMenu.Button {
     }
 
     // ── Currency list (cached daily) ───────────────────────────────────────
-
     async _fetchCurrencyList(notify = true) {
         if (!notify && cacheRead('currency-list', CURRENCY_LIST_TTL_S)) return;
         if (notify) Main.notify('Currency Converter', 'Updating currency list…');
@@ -452,11 +434,10 @@ class CurrencyIndicator extends PanelMenu.Button {
     }
 
     // ── Cleanup ────────────────────────────────────────────────────────────
-
     destroy() {
-        if (this._rateTimer)  { GLib.source_remove(this._rateTimer);           this._rateTimer  = null; }
-        if (this._listTimer)  { GLib.source_remove(this._listTimer);           this._listTimer  = null; }
-        if (this._settingsId) { this._settings.disconnect(this._settingsId);   this._settingsId = null; }
+        if (this._rateTimer)  { GLib.source_remove(this._rateTimer);         this._rateTimer  = null; }
+        if (this._listTimer)  { GLib.source_remove(this._listTimer);         this._listTimer  = null; }
+        if (this._settingsId) { this._settings.disconnect(this._settingsId); this._settingsId = null; }
         super.destroy();
     }
 });
@@ -464,17 +445,14 @@ class CurrencyIndicator extends PanelMenu.Button {
 // ---------------------------------------------------------------------------
 // Extension entry point
 // ---------------------------------------------------------------------------
-
 export default class CurrencyConverterExtension extends Extension {
     enable() {
         this._session   = new Soup.Session();
         this._indicator = new CurrencyIndicator(this);
-        // Position 0 on the right side = leftmost of right-panel items
         Main.panel.addToStatusArea(this.uuid, this._indicator, -1, 'center');
     }
-
     disable() {
-        this._session?.abort();   this._session   = null;
+        this._session?.abort();     this._session   = null;
         this._indicator?.destroy(); this._indicator = null;
     }
 }
