@@ -100,17 +100,18 @@ function makeDates(days, stepDays = 1) {
     return dates; // newest → oldest
 }
 
-/** Generate weekly ISO dates from API_EARLIEST up to today. */
+/** Generate weekly ISO dates from API_EARLIEST up to today, newest→oldest. */
 function makeMaxDates() {
     const today    = GLib.DateTime.new_now_local();
     const earliest = GLib.DateTime.new_local(2024, 1, 1, 0, 0, 0);
     const dates    = [];
-    let   cur      = today;
-    while (cur.compare(earliest) >= 0) {
+    let   cur      = earliest;
+    while (cur.compare(today) <= 0) {
         dates.push(isoDate(cur));
-        cur = cur.add_days(-7);
+        cur = cur.add_days(7);
     }
-    return dates; // newest → oldest
+    dates.push(isoDate(today)); // always include today
+    return dates.reverse();    // newest → oldest
 }
 
 function toDateLabel(iso, showYear = false) {
@@ -144,7 +145,7 @@ class LineChart extends St.DrawingArea {
     _draw(area) {
         const cr = area.get_context();
         const [W, H] = area.get_surface_size();
-        const pad = { t: 24, r: 20, b: 64, l: 72 };
+        const pad = { t: 24, r: 50, b: 64, l: 72 }; // r:50 leaves room for rotated last label
         const cw  = W - pad.l - pad.r;
         const ch  = H - pad.t  - pad.b;
 
@@ -221,7 +222,10 @@ class LineChart extends St.DrawingArea {
         const multiYear = pts[0].date.slice(0, 4) !== pts.at(-1).date.slice(0, 4);
         const maxLabels = Math.max(2, Math.floor(cw / (multiYear ? 64 : 52)));
         const step      = (pts.length - 1) / (maxLabels - 1);
-        const show      = new Set([0, pts.length - 1]);
+        // Exclude the last point from labels — rotated text clips at right edge.
+        // Instead include the second-to-last spaced label so the range is still clear.
+        const lastLabelIdx = Math.max(0, pts.length - Math.round(pts.length / maxLabels));
+        const show      = new Set([0, lastLabelIdx]);
         for (let i = 1; i < maxLabels - 1; i++) show.add(Math.round(i * step));
 
         cr.setFontSize(10);
