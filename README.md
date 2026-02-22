@@ -12,44 +12,25 @@ A simple and elegant GNOME Shell extension that displays real-time currency conv
 
 *   **Real-time Rate Display**: See the latest conversion rate for your chosen currency pair in the GNOME top panel.
 *   **Daily Change Indicator**: A visual icon (▲, ▼, or ―) shows you if the rate has gone up, down, or stayed the same since yesterday.
-*   **Historical Data Chart**: A simple text-based line chart in the dropdown menu visualizes the rate trend over the last 10 days.
+*   **Historical Data Chart**: A simple text-based line chart in the dropdown menu visualizes the rate trend over the last M/Y/Max.
 *   **Customizable Currencies**: Use the preferences window to select any base and target currency from a comprehensive list.
 *   **Manual Refresh**: Instantly fetch the latest rates with a "Refresh" button in the menu and update the currency list.
 *   **Resilient Design**: Works reliably using standard, legacy-compatible GNOME Shell features for maximum stability.
 
 ## Installation
 
-### From the GNOME Extensions Website (Recommended)
-
-The easiest way to install is from the official GNOME Extensions website.
-
-1.  Go to the Currency Conversion Rate page on extensions.gnome.org *(TBD - This link will be active once published)*.
-2.  Click the "ON/OFF" switch.
-3.  Click "Install" in the pop-up dialog.
-
-### Manual Installation from Source
-
-If you prefer to install from the source code:
-
 1. Clone this repository:
 ```bash
-git clone https://github.com/binary-smith/currency-conversion-rate.git
+git clone https://github.com/pipedream/currency-conversion-rate.git
+cd currency-conversion-rate
 ```
-2. Copy the extension to GNOME extensions directory:
+2. Install and compile schemas:
 ```bash
-cp -r currency-conversion-rate ~/.local/share/gnome-shell/extensions/currency-conversion-rate@optimus
+zip -r currency.zip metadata.json extension.js prefs.js convenience.js stylesheet.css currencies.min.json schemas/
+gnome-extensions install --force currency.zip
+glib-compile-schemas ~/.local/share/gnome-shell/extensions/currency-conversion-rate@pipedream.github.com/schemas/
 ```
-3. Restart GNOME Shell (X11):
-    - Press Alt+F2
-    - Type 'r' and press Enter
-4. If you are on Wayland, logout and log back in
-5. Enable the extension using GNOME Extensions app or GNOME Tweaks
-
-## Configuration
-1. Click the currency indicator on your top panel. 
-2. Select Preferences… from the dropdown menu.
-3. In the preferences window, choose your desired Base Currency and Target Currency.
-4. The changes will be applied instantly.
+3. Log out and in again (Wayland) and enable the extension using GNOME Extensions app or GNOME Tweaks
 
 ## Supported list of currencies, which can be paired
 
@@ -61,6 +42,6 @@ cp -r currency-conversion-rate ~/.local/share/gnome-shell/extensions/currency-co
 
 ## Acknowledgments
 
+- This extension forked from https://github.com/binary-smith/currency-conversion-rate, claude-coded for Gnome shell 48
 - This extension uses the free currency-api by fawazahmed0 for exchange rate data - https://github.com/fawazahmed0/exchange-api
 - Also inspired by an existing GNOME extension - https://github.com/faymaz/currency-tracker
-
