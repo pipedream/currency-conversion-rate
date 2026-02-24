@@ -391,10 +391,15 @@ class CurrencyIndicator extends PanelMenu.Button {
         }
 
         // Panel label
-        const today     = allDates[0];
-        const yesterday = dailyDates[1];
-        const rate0 = hist[today], rate1 = hist[yesterday];
-        if (rate0 == null) { this._rateLabel.set_text('No data'); return; }
+        // Fall back through recent dates in case the API hasn't published today's
+        // data yet (e.g. late evening SAST = still previous UTC day).
+        const recentDates = dailyDates.slice(0, 3); // today, yesterday, day before
+        const latestDate  = recentDates.find(d => hist[d] != null);
+        if (!latestDate) { this._rateLabel.set_text('No data'); return; }
+
+        const rate0 = hist[latestDate];
+        const prevDate = dailyDates.find(d => d < latestDate && hist[d] != null);
+        const rate1    = prevDate ? hist[prevDate] : null;
 
         this._rateLabel.set_text(`${base.toUpperCase()}/${target.toUpperCase()}: ${rate0.toFixed(2)}`);
         if (rate1 != null) this._setDirection(rate0 - rate1);
